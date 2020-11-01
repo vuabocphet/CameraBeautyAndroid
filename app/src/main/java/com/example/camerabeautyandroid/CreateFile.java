@@ -11,13 +11,13 @@ import java.util.Date;
 public class CreateFile {
     public static String getFilename(Context context) {
         @SuppressLint("SimpleDateFormat") String format = new SimpleDateFormat("dd_MM_yyyy_HH_mm_ss").format(new Date());
-        File storageDir = context.getExternalFilesDir("EcoAppLock");
+        File storageDir = context.getExternalFilesDir("EcoCatface");
         if (storageDir != null && !storageDir.exists()) {
             storageDir.mkdirs();
         }
         try {
             File file = File.createTempFile(
-                    "img" + format,
+                    "Catface_beauti_" + format,
                     ".jpg",
                     storageDir
             );
@@ -29,7 +29,7 @@ public class CreateFile {
     }
 
     public static String getFodel(Context context) {
-        File ecoAppLock = context.getExternalFilesDir("EcoAppLock");
+        File ecoAppLock = context.getExternalFilesDir("EcoCatface");
         if (ecoAppLock == null) {
             return "";
         }
