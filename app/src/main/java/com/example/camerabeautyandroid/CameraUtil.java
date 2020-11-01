@@ -135,16 +135,21 @@ public class CameraUtil {
      */
     public Bitmap rotaingImageView(int id, int angle, Bitmap bitmap) {
         //旋转图片 动作
+        Bitmap createBitmap = null;
         Matrix matrix = new Matrix();
         matrix.postRotate(angle);
-        //加入翻转 把相机拍照返回照片转正
-        if (id == 1) {
-            matrix.postScale(-1, 1);
+        try {
+            if (id == 1) {
+                matrix.postScale(-1, 1);
+            }
+            createBitmap = Bitmap.createBitmap(bitmap, 0, 0,
+                    bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        } catch (Exception e) {
+            e.printStackTrace();
+            createBitmap = Bitmap.createBitmap(bitmap, 0, 0,
+                    bitmap.getWidth() / 2, bitmap.getHeight() / 2, matrix, true);
         }
-        // 创建新的图片
-        Bitmap resizedBitmap = Bitmap.createBitmap(bitmap, 0, 0,
-                bitmap.getWidth(), bitmap.getHeight(), matrix, true);
-        return resizedBitmap;
+        return createBitmap;
     }
 
     /**

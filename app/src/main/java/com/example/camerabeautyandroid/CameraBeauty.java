@@ -9,28 +9,36 @@ import android.opengl.GLSurfaceView;
 import android.util.DisplayMetrics;
 import android.util.Log;
 import android.view.View;
-import android.view.ViewGroup;
-import android.widget.FrameLayout;
 import android.widget.RelativeLayout;
 
 import androidx.annotation.Nullable;
 
-import java.io.ByteArrayOutputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.OutputStream;
 import java.util.List;
 
 import io.reactivex.Single;
-import io.reactivex.SingleOnSubscribe;
 import io.reactivex.android.schedulers.AndroidSchedulers;
 import io.reactivex.schedulers.Schedulers;
 import jp.co.cyberagent.android.gpuimage.GPUImage;
 import jp.co.cyberagent.android.gpuimage.GPUImageFilter;
 import jp.co.cyberagent.android.gpuimage.GPUImageFilterGroup;
 
+import static com.example.camerabeautyandroid.SaveFile.saveImage;
+
 public class CameraBeauty {
-    private static final String TAG = CameraBeauty.class.getSimpleName();
+
+    private static final String TAG = "TinhNv";
+
+    public enum Preview {
+        PREVIEW_1,
+        PREVIEW_2
+    }
+
+    public enum Ratio {
+        RATIO_16_9,
+        RATIO_4_3,
+        RATIO_1_1,
+        RATIO_FULL
+    }
 
     public interface ObserveCamera {
         void onError(String message);
@@ -63,13 +71,13 @@ public class CameraBeauty {
 
     private ObserveCamera observeCamera;
     private Camera camera;
-    private int cameraId = 1;
+    private int cameraId = 0;
     private int screenWidth = 0;
     private int screenHeight = 0;
-    private int picHeight = 0;
     private Bitmap saveBitmap = null;
     private String imgPathMagic = null;
-
+    private Ratio ratio = Ratio.RATIO_FULL;
+    private Preview preview;
     private GPUImage gpuImage = null;
     private GPUImageFilterGroup magicFilterGroup = null;
     private GPUImageFilterGroup noMagicFilterGroup = null;
@@ -77,8 +85,6 @@ public class CameraBeauty {
     private boolean isPreviewing = false;
     private View customCoverTopView;
     private GLSurfaceView glSurfaceView = null;
-    private boolean fullScreenCamera = true;
-
     private Context context;
 
     public static CameraBeauty create(Context context) {
@@ -102,8 +108,13 @@ public class CameraBeauty {
         this.screenWidth = displayMetrics.widthPixels;
         this.screenHeight = displayMetrics.heightPixels;
         this.customCoverTopView = new View(this.context);
-        this.customCoverTopView.setBackgroundColor(Color.parseColor("#50000000"));
         Log.i(TAG, "screenWidth =" + this.screenWidth + "|" + "screenHeight =" + screenHeight);
+        this.customCoverTopView.setBackgroundColor(Color.parseColor("#50000000"));
+        if (this.screenWidth <= 1080 && this.screenHeight <= 1920) {
+            this.preview = Preview.PREVIEW_1;
+            return;
+        }
+        this.preview = Preview.PREVIEW_2;
     }
 
     private void initCamera(int cameraId) {
@@ -138,75 +149,36 @@ public class CameraBeauty {
         if (parameters.getSupportedFocusModes().contains(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE)) {
             parameters.setFocusMode(Camera.Parameters.FOCUS_MODE_CONTINUOUS_PICTURE);
         }
-        Camera.Size propSizeForHeight = CameraUtil.getInstance().getPropSizeForHeight(parameters.getSupportedPictureSizes(), 800);
-        if (propSizeForHeight == null) {
-            this.observeError("setupCamera", " Camera.Size Null");
-            return;
-        }
-
-        Log.i(TAG, "pictureSize = " + propSizeForHeight.width + " | " + propSizeForHeight.height);
-        parameters.setPictureSize(propSizeForHeight.width, propSizeForHeight.height);
+        Camera.Size sizePicture = bestSizePicture(parameters);
+        Camera.Size sizePreview = bestSizePreview(parameters);
+        parameters.setPictureSize(sizePicture.width, sizePicture.height);
+        parameters.setPreviewSize(sizePreview.width, sizePreview.height);
         camera.setParameters(parameters);
-        this.picHeight = this.screenWidth * propSizeForHeight.width / propSizeForHeight.height;
-        if (!this.fullScreenCamera) {
-            FrameLayout.LayoutParams layoutParams = this.changePreviewSize(camera, this.picHeight, this.screenWidth);
-            this.glSurfaceView.setLayoutParams(layoutParams);
-        }
     }
 
-    private FrameLayout.LayoutParams changePreviewSize(Camera camera, int viewWidth, int viewHeight) {
-        Camera.Parameters parameters = camera.getParameters();
-        List<Camera.Size> supportedPreviewSizes = parameters.getSupportedPreviewSizes();
-        Camera.Size closelySize = null;
-        for (Camera.Size supportedPreviewSize : supportedPreviewSizes) {
-            Log.e(TAG, "CameraPreview :" + supportedPreviewSize.width + " * " + supportedPreviewSize.height);
-            if ((supportedPreviewSize.width == viewWidth) && (supportedPreviewSize.height == viewHeight)) {
-                closelySize = supportedPreviewSize;
+    private Camera.Size bestSizePreview(Camera.Parameters parameters) {
+        Camera.Size bestSize;
+        List<Camera.Size> sizeList = parameters.getSupportedPreviewSizes();
+        bestSize = sizeList.get(0);
+        for (int i = 1; i < sizeList.size(); i++) {
+            if ((sizeList.get(i).width * sizeList.get(i).height) >
+                    (bestSize.width * bestSize.height)) {
+                bestSize = sizeList.get(i);
             }
         }
-        if (closelySize == null) {
-            float reqRatio = (float) viewWidth / viewHeight;
-            float curRatio;
-            float deltaRatio;
-            float deltaRatioMin = Float.MAX_VALUE;
-            for (Camera.Size supportedPreviewSize : supportedPreviewSizes) {
-                if (supportedPreviewSize.width < 1024) continue;
-                curRatio = (float) (supportedPreviewSize.width) / supportedPreviewSize.height;
-                deltaRatio = Math.abs(reqRatio - curRatio);
-                if (deltaRatio < deltaRatioMin) {
-                    deltaRatioMin = deltaRatio;
-                    closelySize = supportedPreviewSize;
-                }
-            }
-        }
-        if (closelySize == null) {
-            observeError("changePreviewSize", "closelySize null");
-            return new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
-        }
-        if (closelySize.height < screenWidth) {
-            int shouldPreviewHeight = (screenWidth * closelySize.width) / closelySize.height;
-            if (screenHeight < shouldPreviewHeight) {
-                closelySize.width = screenHeight;
-                closelySize.height = (screenHeight * closelySize.height) / closelySize.width;
-            } else {
-                closelySize.width = screenWidth;
-                closelySize.height = shouldPreviewHeight;
-            }
-        }
-        boolean hasBlankHeight = SizeUtilJava.px2dp(this.context, (float) (screenHeight - closelySize.width) / 2) > 44;
-        if (hasBlankHeight) {
-            RelativeLayout.LayoutParams layoutParams = new RelativeLayout.LayoutParams(this.screenWidth, SizeUtilJava.dp2px(this.context, 44f));
-            this.customCoverTopView.setLayoutParams(layoutParams);
-        } else {
-            RelativeLayout.LayoutParams params = new RelativeLayout.LayoutParams(this.screenWidth, 0);
-            this.customCoverTopView.setLayoutParams(params);
-        }
-        parameters.setPreviewSize(closelySize.width, closelySize.height);
-        camera.setParameters(parameters);
-        Log.i(TAG, "changePreviewSize: " + closelySize.height + "-" + closelySize.width);
-        return new FrameLayout.LayoutParams(1280, 720);
+        return bestSize;
     }
 
+    private Camera.Size bestSizePicture(Camera.Parameters parameters) {
+        Camera.Size bestSize = null;
+        List<Camera.Size> sizeList = parameters.getSupportedPictureSizes();
+        bestSize = sizeList.get(0);
+        for (int i = 0; i < sizeList.size(); i++) {
+            if (sizeList.get(i).width > bestSize.width)
+                bestSize = sizeList.get(i);
+        }
+        return bestSize;
+    }
 
     public void cature() {
         this.observeProcessImage("The image is being processed");
@@ -242,20 +214,20 @@ public class CameraBeauty {
     }
 
     private void saveFile() {
-        bitmapSingle().subscribeOn(Schedulers.io())
+        this.bitmapSingle().subscribeOn(Schedulers.io())
                 .observeOn(AndroidSchedulers.mainThread())
                 .subscribe();
     }
 
     private Single<Bitmap> bitmapSingle() {
-        return Single.create((SingleOnSubscribe<Bitmap>) emitter -> {
+        return Single.create(emitter -> {
             try {
                 GPUImage gpuImage = new GPUImage(this.context);
                 gpuImage.setImage(this.saveBitmap);
                 gpuImage.setFilter(this.isInMagic ? new GPUImageBeautyFilter() : new GPUImageFilter());
                 Bitmap bitmapWithFilterApplied = gpuImage.getBitmapWithFilterApplied(this.saveBitmap);
                 this.imgPathMagic = CreateFile.getFilename(this.context);
-                String path = saveImage(this.saveBitmap, this.imgPathMagic);
+                String path = saveImage(saveBitmap, this.imgPathMagic, this.getRatio(), this.getPreview());
                 this.observeComplete(path);
                 gpuImage.deleteImage();
                 emitter.onSuccess(bitmapWithFilterApplied);
@@ -267,22 +239,6 @@ public class CameraBeauty {
         });
     }
 
-    public static String saveImage(Bitmap bitmap, String path) throws IOException {
-
-        try {
-            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, bytes);
-            OutputStream fos;
-            fos = new FileOutputStream(path);
-            fos.write(bytes.toByteArray());
-            fos.close();
-        } catch (Exception e) {
-            e.printStackTrace();
-            path = "";
-        }
-        return path;
-    }
-
     public void onResumeCameraBeauty() {
         this.initCamera(this.cameraId);
     }
@@ -291,7 +247,7 @@ public class CameraBeauty {
         this.releaseCamera();
     }
 
-    private void switchCamera() {
+    public void switchCamera() {
         this.releaseCamera();
         this.cameraId = (this.cameraId + 1) % Camera.getNumberOfCameras();
         this.initCamera(this.cameraId);
@@ -321,7 +277,6 @@ public class CameraBeauty {
     }
 
     public CameraBeauty setfullScreenCamera(boolean fullScreenCamera) {
-        this.fullScreenCamera = fullScreenCamera;
         return this;
     }
 
@@ -333,5 +288,33 @@ public class CameraBeauty {
         }
         this.init(glSurfaceView);
         return this;
+    }
+
+    public void updateSizeCamera() {
+        this.initCamera(this.cameraId);
+    }
+
+    public Camera getCamera() {
+        return camera;
+    }
+
+    public Ratio getRatio() {
+        return ratio;
+    }
+
+    public void setRatio(Ratio ratio) {
+        this.ratio = ratio;
+    }
+
+    public int getScreenWidth() {
+        return screenWidth;
+    }
+
+    public int getScreenHeight() {
+        return screenHeight;
+    }
+
+    public Preview getPreview() {
+        return preview;
     }
 }
